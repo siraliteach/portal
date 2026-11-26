@@ -7,10 +7,10 @@ import {
   signOut,
   User
 } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { activeFirebaseConfig } from './firebaseConfig';
 
 // Initialize Firebase App instance safely (prevent duplicate initialization)
-export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+export const app = !getApps().length ? initializeApp(activeFirebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 export const SCOPES = [

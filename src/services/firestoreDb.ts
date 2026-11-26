@@ -15,7 +15,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { activeFirebaseConfig } from './firebaseConfig';
 import { app, auth } from './googleAuth';
 import {
   Student,
@@ -28,8 +28,10 @@ import {
   PortalRole,
 } from '../types';
 
-// CRITICAL: Pass firebaseConfig.firestoreDatabaseId so the Enterprise Firestore instance is targeted
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Pass firestoreDatabaseId when targeting the Enterprise Firestore instance; omit for default DB
+export const db = activeFirebaseConfig.firestoreDatabaseId
+  ? getFirestore(app, activeFirebaseConfig.firestoreDatabaseId)
+  : getFirestore(app);
 
 export const BOOTSTRAPPED_ADMIN_EMAIL = '2331975ali@gmail.com';
 
