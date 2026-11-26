@@ -1,0 +1,513 @@
+{
+  "entities": {
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized administrator account for Sir Ali Preparations.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "displayName", "updatedAt"]
+    },
+    "PortalAccess": {
+      "title": "PortalAccess",
+      "description": "Allowlist entry linking an authorized student or parent email to a student record.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200
+        },
+        "studentId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "role": {
+          "type": "string",
+          "enum": ["student", "parent"]
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "email", "studentId", "studentName", "role", "updatedAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Enrolled student profile with parent contact, allowed login emails, schedule, and syllabus progress.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "rollNo": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "parentName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "parentPhone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "parentEmail": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "allowedEmails": {
+          "type": "array"
+        },
+        "grade": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "board": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "tuitionMode": {
+          "type": "string",
+          "enum": ["home", "online"]
+        },
+        "addressOrLocation": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "timeSlot": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "subjects": {
+          "type": "array"
+        },
+        "monthlyFee": {
+          "type": "number"
+        },
+        "feeDueDay": {
+          "type": "number"
+        },
+        "joiningDate": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "avatarBg": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "groupId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "groupName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "isActive": {
+          "type": "boolean"
+        },
+        "syllabusProgress": {
+          "type": "object"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "rollNo",
+        "name",
+        "phone",
+        "parentName",
+        "parentPhone",
+        "allowedEmails",
+        "grade",
+        "board",
+        "tuitionMode",
+        "timeSlot",
+        "subjects",
+        "monthlyFee",
+        "feeDueDay",
+        "joiningDate",
+        "isActive",
+        "updatedAt"
+      ]
+    },
+    "StudentGroup": {
+      "title": "StudentGroup",
+      "description": "Tuition batch or study group.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "grade": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "subject": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "tuitionMode": {
+          "type": "string",
+          "enum": ["home", "online"]
+        },
+        "timeSlot": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "monthlyFeePerStudent": {
+          "type": "number"
+        },
+        "studentIds": {
+          "type": "array"
+        },
+        "allowedEmails": {
+          "type": "array"
+        },
+        "avatarBg": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "meetingLinkOrLocation": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "grade",
+        "subject",
+        "tuitionMode",
+        "timeSlot",
+        "monthlyFeePerStudent",
+        "studentIds",
+        "allowedEmails",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily class attendance entry for a student.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "studentId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["present", "absent", "late", "excused"]
+        },
+        "topicCovered": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "remarks": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "allowedEmails": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "date", "studentId", "status", "allowedEmails", "updatedAt"]
+    },
+    "TestScore": {
+      "title": "TestScore",
+      "description": "Assessment and quiz score record for a student.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "subject": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "testTitle": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "testDate": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "maxMarks": {
+          "type": "number"
+        },
+        "obtainedMarks": {
+          "type": "number"
+        },
+        "percentage": {
+          "type": "number"
+        },
+        "grade": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "remarks": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "allowedEmails": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "studentId",
+        "subject",
+        "testTitle",
+        "testDate",
+        "maxMarks",
+        "obtainedMarks",
+        "percentage",
+        "grade",
+        "allowedEmails",
+        "updatedAt"
+      ]
+    },
+    "SubjectSyllabus": {
+      "title": "SubjectSyllabus",
+      "description": "Subject curriculum with chapters and topics.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "subject": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "grade": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "chapters": {
+          "type": "array"
+        },
+        "allowedEmails": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "subject", "grade", "chapters", "allowedEmails", "updatedAt"]
+    },
+    "FeeRecord": {
+      "title": "FeeRecord",
+      "description": "Monthly fee invoice and payment receipt for a student.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "month": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "year": {
+          "type": "number"
+        },
+        "totalFee": {
+          "type": "number"
+        },
+        "discount": {
+          "type": "number"
+        },
+        "paidAmount": {
+          "type": "number"
+        },
+        "dueAmount": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["paid", "partial", "pending", "overdue"]
+        },
+        "dueDate": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "paidDate": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "paymentMethod": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "receiptNo": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "remarks": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "allowedEmails": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "studentId",
+        "month",
+        "year",
+        "totalFee",
+        "discount",
+        "paidAmount",
+        "dueAmount",
+        "status",
+        "dueDate",
+        "allowedEmails",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Authorized administrator accounts."
+    },
+    "/portal_access/{accessId}": {
+      "schema": { "$ref": "#/entities/PortalAccess" },
+      "description": "Allowlist entries mapping authorized student/parent emails to student IDs."
+    },
+    "/students/{studentId}": {
+      "schema": { "$ref": "#/entities/Student" },
+      "description": "Enrolled students and their academic profiles."
+    },
+    "/groups/{groupId}": {
+      "schema": { "$ref": "#/entities/StudentGroup" },
+      "description": "Tuition groups and batches."
+    },
+    "/attendance/{attendanceId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Student attendance records."
+    },
+    "/testScores/{testId}": {
+      "schema": { "$ref": "#/entities/TestScore" },
+      "description": "Student test and assessment scores."
+    },
+    "/syllabus/{syllabusId}": {
+      "schema": { "$ref": "#/entities/SubjectSyllabus" },
+      "description": "Subject syllabus structures and chapter lists."
+    },
+    "/fees/{feeId}": {
+      "schema": { "$ref": "#/entities/FeeRecord" },
+      "description": "Student monthly fee invoices and receipts."
+    }
+  }
+}
