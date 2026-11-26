@@ -278,6 +278,7 @@ export interface StoredSheetsConfig {
   spreadsheetUrl: string;
   autoSync: boolean;
   lastSyncedAt?: string;
+  webAppUrl?: string;
 }
 
 export const getStoredSheetsConfig = (): StoredSheetsConfig | null => {

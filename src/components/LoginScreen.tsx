@@ -1,56 +1,101 @@
 import React, { useState } from 'react';
 import {
   GraduationCap,
-  ShieldCheck,
-  LogOut,
   AlertCircle,
   BookOpen,
   CalendarCheck,
   Receipt,
   CheckCircle2,
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+  Loader2,
+  UserPlus,
 } from 'lucide-react';
-import { User } from 'firebase/auth';
-import { portalGoogleSignIn, googleSignOut } from '../services/googleAuth';
+import { PortalUserSession, Student } from '../types';
+import { FullTuitionDataset } from '../services/googleSheets';
+import {
+  hasAnyLocalCredentials,
+  isValidBridgeUrl,
+  loginViaSheetsBridge,
+  saveLocalAdminCredential,
+  verifyLocalCredentials,
+} from '../services/sheetsAuth';
 
 interface LoginScreenProps {
-  currentUser: User | null;
-  isUnauthorized?: boolean;
-  authChecking?: boolean;
-  authError?: string | null;
+  students: Student[];
+  bridgeUrl: string;
+  onLoginSuccess: (result: {
+    session: PortalUserSession;
+    dataset?: FullTuitionDataset;
+    sheetMeta?: { spreadsheetId?: string; spreadsheetTitle?: string; spreadsheetUrl?: string };
+  }) => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
-  currentUser,
-  isUnauthorized = false,
-  authChecking = false,
-  authError = null,
+  students,
+  bridgeUrl,
+  onLoginSuccess,
 }) => {
+  const hasBridge = isValidBridgeUrl(bridgeUrl);
+  const hasLocalAccounts = hasAnyLocalCredentials();
+  const defaultSetupMode = !hasBridge && !hasLocalAccounts;
+
+  const [isSetupMode] = useState<boolean>(defaultSetupMode);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleSignIn = async () => {
-    try {
-      setIsLoading(true);
-      setErrorMsg(null);
-      await portalGoogleSignIn();
-    } catch (err: any) {
-      if (err?.code === 'auth/popup-blocked') {
-        setErrorMsg('Browser popup was blocked. Please allow popups for this site and try again.');
-      } else if (err?.code === 'auth/popup-closed-by-user') {
-        setErrorMsg('Sign-in window was closed before completing Google authentication.');
-      } else {
-        setErrorMsg(err?.message || 'Unable to sign in with Google. Please try again.');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const handleSubmitLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
 
-  const handleSignOut = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      setErrorMsg('Please enter a valid email address.');
+      return;
+    }
+    if (!password) {
+      setErrorMsg('Please enter your password.');
+      return;
+    }
+
     try {
       setIsLoading(true);
-      setErrorMsg(null);
-      await googleSignOut();
+
+      if (isSetupMode) {
+        if (password.length < 4) {
+          setErrorMsg('Admin password must be at least 4 characters long.');
+          return;
+        }
+        if (password !== confirmPassword) {
+          setErrorMsg('Passwords do not match. Please re-enter carefully.');
+          return;
+        }
+        const session = await saveLocalAdminCredential(normalizedEmail, password);
+        onLoginSuccess({ session });
+        return;
+      }
+
+      if (hasBridge) {
+        const res = await loginViaSheetsBridge(bridgeUrl, normalizedEmail, password);
+        onLoginSuccess({
+          session: res.session,
+          dataset: res.dataset,
+          sheetMeta: res.sheetMeta,
+        });
+        return;
+      }
+
+      const session = await verifyLocalCredentials(normalizedEmail, password, students);
+      onLoginSuccess({ session });
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Login failed. Please check your Email ID and Password.');
     } finally {
       setIsLoading(false);
     }
@@ -71,7 +116,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               </h1>
             </div>
           </div>
-          <span className="text-xs text-[#707969] font-medium whitespace-nowrap">
+          <span className="text-xs text-[#707969] font-medium whitespace-nowrap hidden sm:inline">
             CAIE · Federal &amp; Karachi Board · AKU-EB
           </span>
         </div>
@@ -81,16 +126,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       <main className="flex-1 flex items-center justify-center px-4 py-10">
         <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
           {/* Left Editorial Info Column */}
-          <div className="lg:col-span-7 flex flex-col justify-center space-y-6 py-2">
+          <div className="lg:col-span-6 flex flex-col justify-center space-y-6 py-2">
             <div className="space-y-3">
               <p className="text-xs font-semibold tracking-wide text-[#5C6652]">
-                Student, Parent &amp; Academic Administration
+                Updated Weekly
               </p>
               <h2 className="text-3xl sm:text-4xl font-bold font-serif text-[#2D3329] leading-tight text-balance">
-                Academic progress, attendance, and fee records in one secure portal.
+                Academic Portal
               </h2>
               <p className="text-sm text-[#42473E] leading-relaxed max-w-xl">
-                Students and parents can sign in directly with the Google email registered by Sir Ali in the academy database or Google Sheet — no extra approval needed once your email is listed.
+                Only students enrolled with Sir Ali can access this portal.
               </p>
             </div>
 
@@ -127,109 +172,127 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             </div>
           </div>
 
-          {/* Right Sign-In / Access Status Card */}
-          <div className="lg:col-span-5 flex items-center">
-            <div className="w-full bg-white rounded-3xl border border-[#E0E4D9] p-7 shadow-sm space-y-6">
-              {authChecking ? (
-                <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
-                  <div className="w-8 h-8 border-2 border-[#5C6652] border-t-transparent rounded-full animate-spin" />
-                  <p className="text-sm font-semibold text-[#2D3329]">Verifying portal access...</p>
-                  <p className="text-xs text-[#707969]">Checking your registered Google email</p>
+          {/* Right Email + Password Card */}
+          <div className="lg:col-span-6 flex items-center">
+            <div className="w-full bg-white rounded-3xl border border-[#E0E4D9] p-6 sm:p-7 shadow-sm space-y-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <h3 className="text-xl font-bold font-serif text-[#2D3329]">
+                    {isSetupMode ? 'First-Time Admin Setup' : 'Sign In'}
+                  </h3>
+                  <p className="text-xs text-[#707969] leading-relaxed">
+                    {isSetupMode
+                      ? 'Create your local Admin email & password to open the dashboard and connect Google Sheets, or link an existing Sheet below.'
+                      : hasBridge
+                      ? 'Connected to Google Sheets LoginAccess verification.'
+                      : 'Do not share your login credentials with anyone.'}
+                  </p>
                 </div>
-              ) : isUnauthorized && currentUser ? (
-                <div className="space-y-5">
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-[#FAF1EC] text-[#9E6547] flex items-center justify-center shrink-0">
-                      <AlertCircle className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-bold font-serif text-[#2D3329]">
-                        {authError ? 'Unable to Verify Access' : 'Email Not Registered'}
-                      </h3>
-                      <p className="text-xs text-[#707969] mt-0.5">
-                        {authError
-                          ? 'A temporary connection or permission error occurred while checking access.'
-                          : 'Access is restricted to allowlisted student & parent accounts.'}
-                      </p>
-                    </div>
-                  </div>
 
-                  <div className="bg-[#F7F8F3] border border-[#E0E4D9] rounded-2xl p-4 space-y-2 text-xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[#707969]">Signed in as:</span>
-                      <span className="font-semibold text-[#2D3329] truncate">{currentUser.email}</span>
-                    </div>
-                    <p className="text-[#42473E] leading-relaxed pt-1 border-t border-[#E0E4D9]">
-                      {authError ? (
-                        authError
-                      ) : (
-                        <>
-                          This Google email has not been added to any student profile yet. Please ask <strong>Sir Ali</strong> to add your email in the Student Profile or Google Sheet, then sign in again.
-                        </>
-                      )}
-                    </p>
-                  </div>
+                {hasBridge ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#E9EDE0] text-[#5C6652] text-[11px] font-semibold shrink-0">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Sheet Linked
+                  </span>
+                ) : null}
+              </div>
 
-                  <button
-                    type="button"
-                    onClick={handleSignOut}
-                    disabled={isLoading}
-                    className="w-full py-2.5 px-4 bg-[#5C6652] hover:bg-[#4D5644] text-white text-sm font-semibold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    <span>Sign Out &amp; Try Another Email</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-5">
-                  <div className="space-y-1.5">
-                    <h3 className="text-xl font-bold font-serif text-[#2D3329]">
-                      Sign in to Portal
-                    </h3>
-                    <p className="text-xs text-[#707969] leading-relaxed">
-                      Use your allowlisted Google email (Student, Parent, or Admin) to continue.
-                    </p>
-                  </div>
-
-                  {errorMsg && (
-                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-start gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                      <span>{errorMsg}</span>
-                    </div>
-                  )}
-
-                  <button
-                    type="button"
-                    id="portal-google-signin-btn"
-                    onClick={handleSignIn}
-                    disabled={isLoading}
-                    className="w-full py-3 px-4 bg-white hover:bg-[#F7F8F3] text-[#2D3329] border border-[#CAD3C0] rounded-xl text-sm font-semibold transition flex items-center justify-center gap-3 shadow-xs cursor-pointer disabled:opacity-50"
-                  >
-                    <svg className="w-5 h-5 shrink-0" viewBox="0 0 48 48" aria-hidden="true">
-                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
-                    </svg>
-                    <span>{isLoading ? 'Signing in...' : 'Sign in with Google'}</span>
-                  </button>
-
-                  <div className="pt-4 border-t border-[#E0E4D9] space-y-2.5 text-xs text-[#707969]">
-                    <div className="flex items-start gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-[#5C6652] shrink-0 mt-0.5" />
-                      <span>
-                        <strong className="text-[#2D3329]">Students &amp; Parents:</strong> Once Sir Ali adds your email to your profile or Google Sheet, sign in directly anytime.
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <ShieldCheck className="w-4 h-4 text-[#5C6652] shrink-0 mt-0.5" />
-                      <span>
-                        <strong className="text-[#2D3329]">Private Access:</strong> You only see your own linked student records.
-                      </span>
-                    </div>
-                  </div>
+              {errorMsg && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{errorMsg}</span>
                 </div>
               )}
+
+              <form onSubmit={handleSubmitLogin} className="space-y-4">
+                <div>
+                  <label htmlFor="portal-login-email" className="block text-xs font-semibold text-[#2D3329] mb-1.5">
+                    Email Address
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-[#707969] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      id="portal-login-email"
+                      type="email"
+                      autoComplete="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="e.g. abcde12345@gmail.com"
+                      required
+                      className="w-full pl-10 pr-4 py-2.5 bg-[#F7F8F3] border border-[#E0E4D9] rounded-xl text-sm text-[#2D3329] placeholder:text-[#8E9687] focus:outline-none focus:border-[#5C6652] focus:bg-white transition"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="portal-login-password" className="block text-xs font-semibold text-[#2D3329] mb-1.5">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-[#707969] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      id="portal-login-password"
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete={isSetupMode ? 'new-password' : 'current-password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={isSetupMode ? 'Create admin password (min 4 chars)' : 'Enter your password'}
+                      required
+                      className="w-full pl-10 pr-10 py-2.5 bg-[#F7F8F3] border border-[#E0E4D9] rounded-xl text-sm text-[#2D3329] placeholder:text-[#8E9687] focus:outline-none focus:border-[#5C6652] focus:bg-white transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#707969] hover:text-[#2D3329] cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {isSetupMode && (
+                  <div>
+                    <label htmlFor="portal-confirm-password" className="block text-xs font-semibold text-[#2D3329] mb-1.5">
+                      Confirm Admin Password
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-[#707969] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="portal-confirm-password"
+                        type={showPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Re-enter admin password"
+                        required
+                        className="w-full pl-10 pr-4 py-2.5 bg-[#F7F8F3] border border-[#E0E4D9] rounded-xl text-sm text-[#2D3329] placeholder:text-[#8E9687] focus:outline-none focus:border-[#5C6652] focus:bg-white transition"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  id="portal-login-submit-btn"
+                  disabled={isLoading}
+                  className="w-full py-2.5 px-4 bg-[#5C6652] hover:bg-[#4D5644] text-white text-sm font-semibold rounded-xl transition flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Verifying...</span>
+                    </>
+                  ) : isSetupMode ? (
+                    <>
+                      <UserPlus className="w-4 h-4" />
+                      <span>Create Admin Login &amp; Open Portal</span>
+                    </>
+                  ) : (
+                    <span>Verify &amp; Open Portal</span>
+                  )}
+                </button>
+              </form>
             </div>
           </div>
         </div>
@@ -241,7 +304,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           <p className="font-medium text-[#2D3329]">
             Sir Ali Preparations © 2026 · Home &amp; Online Tuitions Portal
           </p>
-          <span>Authorized Email Access</span>
+          <span>siraliteach@gmail.com | +92 302 2324503 | Karachi Pakistan</span>
         </div>
       </footer>
     </div>

@@ -58,26 +58,16 @@ import { LoginScreen } from './components/LoginScreen';
 import { StudentParentPortal } from './components/StudentParentPortal';
 import { getTodayDateString } from './utils/formatters';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
-import { User } from 'firebase/auth';
-import { subscribeAuth, googleSignOut } from './services/googleAuth';
-import { syncAllTablesToGoogleSheets, FullTuitionDataset } from './services/googleSheets';
+import { FullTuitionDataset } from './services/googleSheets';
 import {
-  testConnection,
-  resolveUserPortalRole,
-  bootstrapFirestoreIfEmpty,
-  syncFullDatasetToFirestore,
-  saveStudentToFirestore,
-  deleteStudentFromFirestore,
-  saveGroupToFirestore,
-  deleteGroupFromFirestore,
-  syncAttendanceToFirestore,
-  syncTestScoresToFirestore,
-  syncSyllabusToFirestore,
-  syncFeesToFirestore,
-  subscribeAdminFirestoreData,
-  subscribeStudentParentData,
-} from './services/firestoreDb';
-import { PortalAccessEntry, PortalRole } from './types';
+  extractBridgeUrlFromLocation,
+  refreshViaSheetsBridge,
+  syncAllViaSheetsBridge,
+  filterDatasetForStudentIds,
+  cacheLoginAccountsLocally,
+  isValidBridgeUrl,
+} from './services/sheetsAuth';
+import { PortalUserSession } from './types';
 
 export default function App() {
   // Current system date dynamically initialized and automatically updated daily
@@ -152,118 +142,147 @@ export default function App() {
   // Toast notification state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Google Sheets DB & Portal Auth States
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [authReady, setAuthReady] = useState<boolean>(false);
-  const [authChecking, setAuthChecking] = useState<boolean>(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [portalRole, setPortalRole] = useState<PortalRole | null>(null);
-  const [accessEntries, setAccessEntries] = useState<PortalAccessEntry[]>([]);
+  // Google Sheets DB & Portal Auth States (in-memory session only)
+  const [session, setSession] = useState<PortalUserSession | null>(null);
+  const [isRefreshingPortal, setIsRefreshingPortal] = useState<boolean>(false);
   const [sheetsConfig, setSheetsConfig] = useState<GoogleSheetsConfig | null>(() => getStoredSheetsConfig());
 
-  // Validate Firestore connection on initial boot
+  // Extract optional ?bridge= Web App URL on boot so shared student/parent links connect automatically
   useEffect(() => {
-    testConnection();
+    const resolvedBridge = extractBridgeUrlFromLocation();
+    if (resolvedBridge && resolvedBridge !== sheetsConfig?.webAppUrl) {
+      setSheetsConfig(getStoredSheetsConfig());
+    }
   }, []);
 
-  // Listen for Firebase Auth state & resolve Admin vs Student/Parent role + live Firestore sync
-  useEffect(() => {
-    let unsubFirestore: (() => void) | null = null;
-    let cancelled = false;
-
-    const unsubAuth = subscribeAuth(async (user) => {
-      if (unsubFirestore) {
-        unsubFirestore();
-        unsubFirestore = null;
-      }
-
-      setCurrentUser(user);
-      setAuthReady(true);
-      setAuthError(null);
-
-      if (!user) {
-        setPortalRole(null);
-        setAccessEntries([]);
-        setAuthChecking(false);
-        return;
-      }
-
-      setAuthChecking(true);
-      try {
-        const resolved = await resolveUserPortalRole(user);
-        if (cancelled) return;
-
-        setPortalRole(resolved.role);
-        setAccessEntries(resolved.accessEntries);
-
-        if (resolved.role === 'admin') {
-          try {
-            await bootstrapFirestoreIfEmpty({
-              students: getStoredStudents(),
-              groups: getStoredGroups(),
-              attendance: getStoredAttendance(),
-              testScores: getStoredTests(),
-              syllabus: getStoredSyllabus(),
-              fees: getStoredFees(),
-            });
-          } catch (syncErr) {
-            console.error('Initial Firestore bootstrap sync error:', syncErr);
-            if (!cancelled) {
-              setToastMessage('Signed in as Admin. Initial cloud sync will retry on next save.');
-              setTimeout(() => setToastMessage(null), 4000);
-            }
-          }
-
-          if (cancelled) return;
-
-          unsubFirestore = subscribeAdminFirestoreData({
-            onStudents: (data) => setStudents(data),
-            onGroups: (data) => setGroups(data),
-            onAttendance: (data) => setAttendance(data),
-            onTestScores: (data) => setTestScores(data),
-            onSyllabus: (data) => setSyllabus(data),
-            onFees: (data) => setFees(data),
-          });
-        } else if (resolved.role === 'student_parent' && user.email) {
-          unsubFirestore = subscribeStudentParentData(user.email.trim().toLowerCase(), {
-            onStudents: (data) => setStudents(data),
-            onGroups: (data) => setGroups(data),
-            onAttendance: (data) => setAttendance(data),
-            onTestScores: (data) => setTestScores(data),
-            onSyllabus: (data) => setSyllabus(data),
-            onFees: (data) => setFees(data),
-          });
-        }
-      } catch (err: any) {
-        console.error('Role resolution error:', err);
-        if (!cancelled) {
-          setPortalRole('unauthorized');
-          setAuthError(err?.message || 'Unable to verify portal access with Cloud Database.');
-        }
-      } finally {
-        if (!cancelled) {
-          setAuthChecking(false);
-        }
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      unsubAuth();
-      if (unsubFirestore) unsubFirestore();
-    };
-  }, []);
-
-  const handlePortalSignOut = async () => {
-    await googleSignOut();
-    setPortalRole(null);
-    setAccessEntries([]);
-    setCurrentUser(null);
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3500);
   };
 
   const handleUpdateSheetsConfig = (newConfig: GoogleSheetsConfig | null) => {
     setSheetsConfig(newConfig);
     setStoredSheetsConfig(newConfig);
+  };
+
+  const syncDatasetToSheetsIfEnabled = async (nextDataset: FullTuitionDataset) => {
+    if (
+      session?.role === 'admin' &&
+      session.bridgeToken &&
+      sheetsConfig?.autoSync &&
+      sheetsConfig?.webAppUrl &&
+      isValidBridgeUrl(sheetsConfig.webAppUrl)
+    ) {
+      try {
+        await syncAllViaSheetsBridge(sheetsConfig.webAppUrl, session.bridgeToken, nextDataset);
+        handleUpdateSheetsConfig({
+          ...sheetsConfig,
+          lastSyncedAt: new Date().toLocaleTimeString(),
+        });
+      } catch (err: any) {
+        console.error('Google Sheets auto-sync failed:', err);
+        showToast('Saved locally. Google Sheets auto-sync will retry on manual Push.');
+      }
+    }
+  };
+
+  const handleLoginSuccess = (result: {
+    session: PortalUserSession;
+    dataset?: FullTuitionDataset;
+    sheetMeta?: { spreadsheetId?: string; spreadsheetTitle?: string; spreadsheetUrl?: string };
+  }) => {
+    setSession(result.session);
+
+    if (result.sheetMeta) {
+      const current = getStoredSheetsConfig();
+      handleUpdateSheetsConfig({
+        spreadsheetId: result.sheetMeta.spreadsheetId || current?.spreadsheetId || 'apps-script-linked',
+        spreadsheetTitle: result.sheetMeta.spreadsheetTitle || current?.spreadsheetTitle || 'Google Sheets Portal Database',
+        spreadsheetUrl: result.sheetMeta.spreadsheetUrl || current?.spreadsheetUrl || '',
+        autoSync: current?.autoSync ?? true,
+        lastSyncedAt: new Date().toLocaleTimeString(),
+        webAppUrl: current?.webAppUrl,
+      });
+    }
+
+    if (result.session.role === 'admin') {
+      if (result.dataset) {
+        const hasSheetRecords =
+          result.dataset.students.length > 0 ||
+          result.dataset.groups.length > 0 ||
+          result.dataset.attendance.length > 0 ||
+          result.dataset.testScores.length > 0 ||
+          result.dataset.fees.length > 0;
+
+        if (hasSheetRecords) {
+          if (result.dataset.students.length > 0) setStudents(result.dataset.students);
+          if (result.dataset.groups.length > 0) setGroups(result.dataset.groups);
+          if (result.dataset.attendance.length > 0) setAttendance(result.dataset.attendance);
+          if (result.dataset.testScores.length > 0) setTestScores(result.dataset.testScores);
+          if (result.dataset.syllabus.length > 0) setSyllabus(result.dataset.syllabus);
+          if (result.dataset.fees.length > 0) setFees(result.dataset.fees);
+        }
+      }
+      showToast(`Signed in as Admin (${result.session.email})`);
+    } else {
+      if (result.dataset) {
+        setStudents(result.dataset.students);
+        setGroups(result.dataset.groups);
+        setAttendance(result.dataset.attendance);
+        setTestScores(result.dataset.testScores);
+        setSyllabus(result.dataset.syllabus);
+        setFees(result.dataset.fees);
+      } else {
+        const scoped = filterDatasetForStudentIds(
+          {
+            students: getStoredStudents(),
+            groups: getStoredGroups(),
+            attendance: getStoredAttendance(),
+            testScores: getStoredTests(),
+            syllabus: getStoredSyllabus(),
+            fees: getStoredFees(),
+          },
+          result.session.studentIds,
+          result.session.email
+        );
+        setStudents(scoped.students);
+        setGroups(scoped.groups);
+        setAttendance(scoped.attendance);
+        setTestScores(scoped.testScores);
+        setSyllabus(scoped.syllabus);
+        setFees(scoped.fees);
+      }
+    }
+  };
+
+  const handleRefreshStudentPortal = async () => {
+    if (!session || !session.bridgeToken || !sheetsConfig?.webAppUrl) return;
+    try {
+      setIsRefreshingPortal(true);
+      const ds = await refreshViaSheetsBridge(sheetsConfig.webAppUrl, session.bridgeToken);
+      setStudents(ds.students);
+      setGroups(ds.groups);
+      setAttendance(ds.attendance);
+      setTestScores(ds.testScores);
+      setSyllabus(ds.syllabus);
+      setFees(ds.fees);
+    } catch (err: any) {
+      showToast(err?.message || 'Unable to refresh from Google Sheets');
+    } finally {
+      setIsRefreshingPortal(false);
+    }
+  };
+
+  const handlePortalSignOut = () => {
+    setSession(null);
+    setStudents(getStoredStudents());
+    setGroups(getStoredGroups());
+    setAttendance(getStoredAttendance());
+    setTestScores(getStoredTests());
+    setSyllabus(getStoredSyllabus());
+    setFees(getStoredFees());
   };
 
   const handleApplyPulledData = (dataset: FullTuitionDataset) => {
@@ -282,50 +301,38 @@ export default function App() {
       setSyllabus(nextSyllabus);
       setFees(nextFees);
 
-      await syncFullDatasetToFirestore({
-        students: nextStudents,
-        groups: nextGroups,
-        attendance: nextAttendance,
-        testScores: nextTests,
-        syllabus: nextSyllabus,
-        fees: nextFees,
-      });
+      if (dataset.loginAccounts && dataset.loginAccounts.length > 0) {
+        await cacheLoginAccountsLocally(dataset.loginAccounts);
+      }
 
-      showToast('Master dataset & portal email allowlist synced to Cloud Database.');
+      showToast('Database & LoginAccess credentials synced from Google Sheets.');
     });
-  };
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 3500);
   };
 
   // Sync to localStorage only for Admin
   useEffect(() => {
-    if (portalRole === 'admin') setStoredStudents(students);
-  }, [students, portalRole]);
+    if (session?.role === 'admin') setStoredStudents(students);
+  }, [students, session?.role]);
 
   useEffect(() => {
-    if (portalRole === 'admin') setStoredGroups(groups);
-  }, [groups, portalRole]);
+    if (session?.role === 'admin') setStoredGroups(groups);
+  }, [groups, session?.role]);
 
   useEffect(() => {
-    if (portalRole === 'admin') setStoredAttendance(attendance);
-  }, [attendance, portalRole]);
+    if (session?.role === 'admin') setStoredAttendance(attendance);
+  }, [attendance, session?.role]);
 
   useEffect(() => {
-    if (portalRole === 'admin') setStoredTests(testScores);
-  }, [testScores, portalRole]);
+    if (session?.role === 'admin') setStoredTests(testScores);
+  }, [testScores, session?.role]);
 
   useEffect(() => {
-    if (portalRole === 'admin') setStoredSyllabus(syllabus);
-  }, [syllabus, portalRole]);
+    if (session?.role === 'admin') setStoredSyllabus(syllabus);
+  }, [syllabus, session?.role]);
 
   useEffect(() => {
-    if (portalRole === 'admin') setStoredFees(fees);
-  }, [fees, portalRole]);
+    if (session?.role === 'admin') setStoredFees(fees);
+  }, [fees, session?.role]);
 
   // Unlock check
   const requireUnlock = (reason: string, action?: () => void): boolean => {
@@ -408,7 +415,8 @@ export default function App() {
       setGroups(nextGroups);
     }
 
-    await saveStudentToFirestore(savedStudent, updated, {
+    await syncDatasetToSheetsIfEnabled({
+      students: updated,
       groups: nextGroups,
       attendance,
       testScores,
@@ -419,19 +427,14 @@ export default function App() {
 
   const handleUpdateStudentsList = async (updatedStudents: Student[]) => {
     setStudents(updatedStudents);
-    const changed = updatedStudents.filter((st) => {
-      const prev = students.find((p) => p.id === st.id);
-      return !prev || JSON.stringify(prev) !== JSON.stringify(st);
+    await syncDatasetToSheetsIfEnabled({
+      students: updatedStudents,
+      groups,
+      attendance,
+      testScores,
+      syllabus,
+      fees,
     });
-    for (const st of changed) {
-      await saveStudentToFirestore(st, updatedStudents, {
-        groups,
-        attendance,
-        testScores,
-        syllabus,
-        fees,
-      });
-    }
   };
 
   const handleDeleteStudent = (studentId: string) => {
@@ -451,12 +454,14 @@ export default function App() {
           setStudents(nextStudents);
           setGroups(nextGroups);
           setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-          await deleteStudentFromFirestore(studentId);
-          for (const g of nextGroups) {
-            if (groups.find(orig => orig.id === g.id)?.studentIds.includes(studentId)) {
-              await saveGroupToFirestore(g, nextStudents);
-            }
-          }
+          await syncDatasetToSheetsIfEnabled({
+            students: nextStudents,
+            groups: nextGroups,
+            attendance,
+            testScores,
+            syllabus,
+            fees,
+          });
           showToast(`Removed ${student.name} from active roster.`);
         }
       });
@@ -474,42 +479,57 @@ export default function App() {
   // Group Management Handlers
   const handleSaveGroup = (group: StudentGroup) => {
     requireUnlock('Enter PIN to create/edit group batch', async () => {
-      setGroups(prev => {
-        const idx = prev.findIndex(g => g.id === group.id);
-        if (idx >= 0) {
-          const clone = [...prev];
-          clone[idx] = group;
-          return clone;
-        }
-        return [...prev, group];
+      const idx = groups.findIndex(g => g.id === group.id);
+      const nextGroups = idx >= 0
+        ? groups.map(g => (g.id === group.id ? group : g))
+        : [...groups, group];
+      setGroups(nextGroups);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups: nextGroups,
+        attendance,
+        testScores,
+        syllabus,
+        fees,
       });
-      await saveGroupToFirestore(group, students);
       showToast(`Saved Group Batch: ${group.name}`);
     });
   };
 
   const handleDeleteGroup = (groupId: string) => {
     requireUnlock('Enter PIN to delete group batch', async () => {
-      setGroups(prev => prev.filter(g => g.id !== groupId));
-      await deleteGroupFromFirestore(groupId);
+      const nextGroups = groups.filter(g => g.id !== groupId);
+      setGroups(nextGroups);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups: nextGroups,
+        attendance,
+        testScores,
+        syllabus,
+        fees,
+      });
       showToast('Group batch removed.');
     });
   };
 
   const handleAssignStudentsToGroup = (groupId: string, studentIds: string[]) => {
     requireUnlock('Enter PIN to assign students to group', async () => {
-      let updatedGroup: StudentGroup | null = null;
-      setGroups(prev => prev.map(g => {
+      const nextGroups = groups.map(g => {
         if (g.id === groupId) {
           const set = new Set([...g.studentIds, ...studentIds]);
-          updatedGroup = { ...g, studentIds: Array.from(set) };
-          return updatedGroup;
+          return { ...g, studentIds: Array.from(set) };
         }
         return g;
-      }));
-      if (updatedGroup) {
-        await saveGroupToFirestore(updatedGroup, students);
-      }
+      });
+      setGroups(nextGroups);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups: nextGroups,
+        attendance,
+        testScores,
+        syllabus,
+        fees,
+      });
       showToast(`Assigned ${studentIds.length} student(s) to group.`);
     });
   };
@@ -534,7 +554,14 @@ export default function App() {
         }
       });
       setAttendance(updated);
-      await syncAttendanceToFirestore(updated, students);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance: updated,
+        testScores,
+        syllabus,
+        fees,
+      });
       showToast(`1-Click Attendance logged: Marked ${group.studentIds.length} students as ${status.toUpperCase()}`);
     });
   };
@@ -564,7 +591,14 @@ export default function App() {
         }
       });
       setFees(newFees);
-      await syncFeesToFirestore(newFees, students);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance,
+        testScores,
+        syllabus,
+        fees: newFees,
+      });
       showToast(`1-Click Fee invoices generated for ${group.studentIds.length} students (${month})`);
     });
   };
@@ -590,7 +624,14 @@ export default function App() {
         });
       });
       setTestScores(newTests);
-      await syncTestScoresToFirestore(newTests, students);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance,
+        testScores: newTests,
+        syllabus,
+        fees,
+      });
       showToast(`1-Click Test scheduled for all ${group.studentIds.length} students in ${group.name}`);
     });
   };
@@ -652,7 +693,14 @@ export default function App() {
         });
       }
       setSyllabus(nextSyllabus);
-      await syncSyllabusToFirestore(nextSyllabus, students);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance,
+        testScores,
+        syllabus: nextSyllabus,
+        fees,
+      });
       showToast(`1-Click Chapter '${chapterTitle}' assigned to syllabus (${subject})`);
     });
   };
@@ -678,7 +726,14 @@ export default function App() {
       }
 
       setAttendance(updated);
-      await syncAttendanceToFirestore(updated, students);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance: updated,
+        testScores,
+        syllabus,
+        fees,
+      });
       const student = students.find(s => s.id === studentId);
       showToast(`Marked ${student?.name || 'Student'} as ${status.toUpperCase()} for today.`);
     };
@@ -689,7 +744,14 @@ export default function App() {
   const handleUpdateAttendance = (newRecords: AttendanceRecord[]) => {
     requireUnlock('Enter PIN to update attendance records', async () => {
       setAttendance(newRecords);
-      await syncAttendanceToFirestore(newRecords, students);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance: newRecords,
+        testScores,
+        syllabus,
+        fees,
+      });
       showToast('Attendance records saved.');
     });
   };
@@ -698,7 +760,14 @@ export default function App() {
   const handleUpdateSyllabus = (newSyllabus: SubjectSyllabus[]) => {
     requireUnlock('Enter PIN to modify syllabus progress', async () => {
       setSyllabus(newSyllabus);
-      await syncSyllabusToFirestore(newSyllabus, students);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance,
+        testScores,
+        syllabus: newSyllabus,
+        fees,
+      });
       showToast('Syllabus progress updated.');
     });
   };
@@ -713,7 +782,14 @@ export default function App() {
       updated = [savedFee, ...fees];
     }
     setFees(updated);
-    await syncFeesToFirestore([savedFee], students);
+    await syncDatasetToSheetsIfEnabled({
+      students,
+      groups,
+      attendance,
+      testScores,
+      syllabus,
+      fees: updated,
+    });
     showToast(`Fee record updated: ${savedFee.month}`);
     if (savedFee.status === 'paid') {
       try {
@@ -742,7 +818,14 @@ export default function App() {
   const handleSaveTest = async (savedTest: TestScore) => {
     const updated = [savedTest, ...testScores];
     setTestScores(updated);
-    await syncTestScoresToFirestore([savedTest], students);
+    await syncDatasetToSheetsIfEnabled({
+      students,
+      groups,
+      attendance,
+      testScores: updated,
+      syllabus,
+      fees,
+    });
     showToast(`Logged test marks: ${savedTest.testTitle}`);
   };
 
@@ -757,17 +840,29 @@ export default function App() {
     requireUnlock('Enter PIN to delete test score record', async () => {
       const nextTests = testScores.filter(t => t.id !== testId);
       setTestScores(nextTests);
-      await syncTestScoresToFirestore([], students, [testId]);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance,
+        testScores: nextTests,
+        syllabus,
+        fees,
+      });
       showToast('Deleted test record.');
     });
   };
 
   const handleUpdateTestScores = (newScores: TestScore[]) => {
     requireUnlock('Enter PIN to modify test score records', async () => {
-      const newIds = new Set(newScores.map(t => t.id));
-      const deletedIds = testScores.filter(t => !newIds.has(t.id)).map(t => t.id);
       setTestScores(newScores);
-      await syncTestScoresToFirestore(newScores, students, deletedIds);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance,
+        testScores: newScores,
+        syllabus,
+        fees,
+      });
       showToast('Test scores updated.');
     });
   };
@@ -775,7 +870,14 @@ export default function App() {
   const handleUpdateFees = (newFees: FeeRecord[]) => {
     requireUnlock('Enter PIN to modify fee records', async () => {
       setFees(newFees);
-      await syncFeesToFirestore(newFees, students);
+      await syncDatasetToSheetsIfEnabled({
+        students,
+        groups,
+        attendance,
+        testScores,
+        syllabus,
+        fees: newFees,
+      });
       showToast('Fee ledger updated.');
     });
   };
@@ -809,7 +911,7 @@ export default function App() {
           setFees(initFees);
           setConfirmDialog(prev => ({ ...prev, isOpen: false }));
 
-          await syncFullDatasetToFirestore({
+          await syncDatasetToSheetsIfEnabled({
             students: initStudents,
             groups: initGroups,
             attendance: initAttendance,
@@ -830,24 +932,21 @@ export default function App() {
     online: students.filter(s => s.tuitionMode === 'online').length,
   };
 
-  // Gate UI by Authentication & Role
-  if (!authReady || authChecking) {
-    return <LoginScreen currentUser={currentUser} authChecking />;
+  // Gate UI by Email + Password Session
+  if (!session) {
+    return (
+      <LoginScreen
+        students={students}
+        bridgeUrl={sheetsConfig?.webAppUrl || ''}
+        onLoginSuccess={handleLoginSuccess}
+      />
+    );
   }
 
-  if (!currentUser) {
-    return <LoginScreen currentUser={null} />;
-  }
-
-  if (portalRole === 'unauthorized' || !portalRole) {
-    return <LoginScreen currentUser={currentUser} isUnauthorized authError={authError} />;
-  }
-
-  if (portalRole === 'student_parent') {
+  if (session.role === 'student' || session.role === 'parent') {
     return (
       <StudentParentPortal
-        currentUser={currentUser}
-        accessEntries={accessEntries}
+        session={session}
         students={students}
         groups={groups}
         attendance={attendance}
@@ -855,6 +954,8 @@ export default function App() {
         syllabus={syllabus}
         fees={fees}
         onSignOut={handlePortalSignOut}
+        onRefresh={session.authSource === 'sheets_bridge' ? handleRefreshStudentPortal : undefined}
+        isRefreshing={isRefreshingPortal}
       />
     );
   }
@@ -891,7 +992,7 @@ export default function App() {
         onToggleLock={handleToggleLock}
         onOpenChangePin={handleOpenChangePin}
         sheetsConfig={sheetsConfig}
-        adminEmail={currentUser.email}
+        adminEmail={session.email}
         onSignOut={handlePortalSignOut}
       />
 
@@ -1029,11 +1130,11 @@ export default function App() {
             syllabus={syllabus}
             fees={fees}
             sheetsConfig={sheetsConfig}
+            session={session}
+            onSessionUpdate={setSession}
             onUpdateConfig={handleUpdateSheetsConfig}
             onApplyPulledData={handleApplyPulledData}
             showToast={showToast}
-            currentUser={currentUser}
-            onUserAuthChange={(user) => setCurrentUser(user)}
           />
         )}
 

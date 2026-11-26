@@ -122,6 +122,28 @@ export interface GoogleSheetsConfig {
   spreadsheetUrl: string;
   autoSync: boolean;
   lastSyncedAt?: string;
+  webAppUrl?: string;
+}
+
+export type LoginAccountRole = 'admin' | 'student' | 'parent';
+
+export interface LoginAccount {
+  email: string;
+  password?: string;
+  passwordHash?: string;
+  role: LoginAccountRole;
+  studentId: string;
+  studentName?: string;
+  status: 'active' | 'disabled';
+}
+
+export interface PortalUserSession {
+  email: string;
+  name: string;
+  role: LoginAccountRole;
+  studentIds: string[];
+  authSource: 'sheets_bridge' | 'local_credentials';
+  bridgeToken?: string;
 }
 
 export type PortalRole = 'admin' | 'student_parent' | 'unauthorized';
@@ -133,5 +155,3 @@ export interface PortalAccessEntry {
   studentName: string;
   role: 'student' | 'parent';
 }
-
-

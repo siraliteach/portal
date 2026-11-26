@@ -17,8 +17,8 @@ import {
   ChevronDown,
   ChevronRight,
   Users,
+  RefreshCw,
 } from 'lucide-react';
-import { User } from 'firebase/auth';
 import {
   Student,
   StudentGroup,
@@ -26,7 +26,7 @@ import {
   TestScore,
   SubjectSyllabus,
   FeeRecord,
-  PortalAccessEntry,
+  PortalUserSession,
 } from '../types';
 import { getStudentSyllabusList } from '../data/curriculumDatabase';
 import { formatCurrency, formatDisplayDate } from '../utils/formatters';
@@ -34,8 +34,7 @@ import { FeeReceiptModal } from './FeeReceiptModal';
 import { ReportCardModal } from './ReportCardModal';
 
 interface StudentParentPortalProps {
-  currentUser: User;
-  accessEntries: PortalAccessEntry[];
+  session: PortalUserSession;
   students: Student[];
   groups: StudentGroup[];
   attendance: AttendanceRecord[];
@@ -43,13 +42,14 @@ interface StudentParentPortalProps {
   syllabus: SubjectSyllabus[];
   fees: FeeRecord[];
   onSignOut: () => void;
+  onRefresh?: () => Promise<void>;
+  isRefreshing?: boolean;
 }
 
 type PortalTab = 'overview' | 'attendance' | 'syllabus' | 'tests' | 'fees';
 
 export const StudentParentPortal: React.FC<StudentParentPortalProps> = ({
-  currentUser,
-  accessEntries,
+  session,
   students,
   groups,
   attendance,
@@ -57,6 +57,8 @@ export const StudentParentPortal: React.FC<StudentParentPortalProps> = ({
   syllabus,
   fees,
   onSignOut,
+  onRefresh,
+  isRefreshing = false,
 }) => {
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<PortalTab>('overview');
@@ -79,10 +81,8 @@ export const StudentParentPortal: React.FC<StudentParentPortalProps> = ({
   );
 
   const activeRoleLabel = useMemo(() => {
-    if (!activeStudent) return 'Student / Parent';
-    const match = accessEntries.find((e) => e.studentId === activeStudent.id);
-    return match?.role === 'parent' ? 'Parent Account' : 'Student Account';
-  }, [accessEntries, activeStudent]);
+    return session.role === 'parent' ? 'Parent Account' : 'Student Account';
+  }, [session.role]);
 
   // Scoped records for activeStudent
   const studentAttendance = useMemo(
@@ -187,17 +187,30 @@ export const StudentParentPortal: React.FC<StudentParentPortalProps> = ({
       <div className="min-h-screen bg-[#F7F8F3] text-[#2D3329] flex items-center justify-center p-6">
         <div className="bg-white border border-[#E0E4D9] rounded-3xl p-8 max-w-md w-full text-center space-y-4">
           <GraduationCap className="w-10 h-10 text-[#5C6652] mx-auto" />
-          <h2 className="text-xl font-bold font-serif">Loading Student Profile</h2>
-          <p className="text-xs text-[#707969]">
-            Fetching records linked to {currentUser.email}...
+          <h2 className="text-xl font-bold font-serif">No Linked Student Profile Found</h2>
+          <p className="text-xs text-[#707969] leading-relaxed">
+            Your login ({session.email}) succeeded, but no student record matched your Student ID or email in the Students sheet yet. Please ask Sir Ali to check the Student ID column in the LoginAccess tab.
           </p>
-          <button
-            type="button"
-            onClick={onSignOut}
-            className="px-4 py-2 bg-[#F0F2EA] hover:bg-[#E0E4D9] text-[#2D3329] text-xs font-semibold rounded-xl transition cursor-pointer"
-          >
-            Sign Out
-          </button>
+          <div className="flex items-center justify-center gap-2 pt-2">
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={isRefreshing}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#5C6652] hover:bg-[#4D5644] text-white text-xs font-semibold rounded-xl transition cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="px-4 py-2 bg-[#F0F2EA] hover:bg-[#E0E4D9] text-[#2D3329] text-xs font-semibold rounded-xl transition cursor-pointer"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -217,12 +230,12 @@ export const StudentParentPortal: React.FC<StudentParentPortalProps> = ({
                 Sir Ali Preparations
               </h1>
               <p className="text-xs text-[#707969] truncate">
-                {activeRoleLabel} · {currentUser.email}
+                {activeRoleLabel} · {session.email}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2.5 shrink-0">
             {students.length > 1 && (
               <div className="flex items-center gap-1.5 bg-[#F0F2EA] border border-[#E0E4D9] rounded-xl px-2.5 py-1.5 text-xs">
                 <Users className="w-3.5 h-3.5 text-[#5C6652]" />
@@ -238,6 +251,18 @@ export const StudentParentPortal: React.FC<StudentParentPortalProps> = ({
                   ))}
                 </select>
               </div>
+            )}
+
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={isRefreshing}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-[#F0F2EA] text-[#2D3329] border border-[#E0E4D9] text-xs font-semibold transition cursor-pointer whitespace-nowrap disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-[#5C6652] ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">{isRefreshing ? 'Syncing...' : 'Refresh'}</span>
+              </button>
             )}
 
             <button

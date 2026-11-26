@@ -4,7 +4,9 @@ import {
   AttendanceRecord, 
   TestScore, 
   SubjectSyllabus, 
-  FeeRecord 
+  FeeRecord,
+  LoginAccount,
+  LoginAccountRole
 } from '../types';
 
 export interface SheetTabInfo {
@@ -28,6 +30,7 @@ export interface FullTuitionDataset {
   testScores: TestScore[];
   syllabus: SubjectSyllabus[];
   fees: FeeRecord[];
+  loginAccounts?: LoginAccount[];
 }
 
 // Standard Schema Headers for Google Sheets Database Tabs
@@ -106,6 +109,14 @@ export const SCHEMA_HEADERS = {
     'Payment Method',
     'Receipt No',
     'Remarks'
+  ],
+  LoginAccess: [
+    'Email',
+    'Password',
+    'Role',
+    'Student ID',
+    'Student Name',
+    'Status'
   ]
 };
 
@@ -155,6 +166,7 @@ export async function createTuitionDatabaseSpreadsheet(
       title,
     },
     sheets: [
+      { properties: { title: 'LoginAccess', gridProperties: { frozenRowCount: 1 } } },
       { properties: { title: 'Students', gridProperties: { frozenRowCount: 1 } } },
       { properties: { title: 'Groups', gridProperties: { frozenRowCount: 1 } } },
       { properties: { title: 'Attendance', gridProperties: { frozenRowCount: 1 } } },
@@ -335,7 +347,7 @@ export async function syncAllTablesToGoogleSheets(
   const info = await fetchSpreadsheetInfo(accessToken, spreadsheetId);
   const existingTabNames = new Set(info.sheets.map((s) => s.title));
 
-  const requiredTabs = ['Students', 'Groups', 'Attendance', 'TestScores', 'Syllabus', 'Fees'];
+  const requiredTabs = ['LoginAccess', 'Students', 'Groups', 'Attendance', 'TestScores', 'Syllabus', 'Fees'];
   for (const tab of requiredTabs) {
     if (!existingTabNames.has(tab)) {
       try {
@@ -446,15 +458,40 @@ export async function syncAllTablesToGoogleSheets(
     ]),
   ];
 
-  // 3. Batch write all tabs
-  await Promise.all([
+  // 3. Batch write all data tabs
+  const writeTasks: Promise<void>[] = [
     writeSheetValues(accessToken, spreadsheetId, 'Students!A1:S', studentsRows),
     writeSheetValues(accessToken, spreadsheetId, 'Groups!A1:J', groupsRows),
     writeSheetValues(accessToken, spreadsheetId, 'Attendance!A1:F', attendanceRows),
     writeSheetValues(accessToken, spreadsheetId, 'TestScores!A1:J', testScoresRows),
     writeSheetValues(accessToken, spreadsheetId, 'Syllabus!A1:D', syllabusRows),
     writeSheetValues(accessToken, spreadsheetId, 'Fees!A1:N', feesRows),
-  ]);
+  ];
+
+  // Ensure LoginAccess header exists without overwriting manually entered user passwords
+  const existingLoginRows = await readSheetValues(accessToken, spreadsheetId, 'LoginAccess!A1:F2').catch(() => []);
+  if (existingLoginRows.length === 0) {
+    const initialLoginRows: any[][] = [
+      SCHEMA_HEADERS.LoginAccess,
+      ['2331975ali@gmail.com', 'CHANGE_ADMIN_PASSWORD', 'admin', 'ALL', 'Sir Ali (Admin)', 'active'],
+      ...dataset.students
+        .filter((s) => s.email || s.parentEmail)
+        .slice(0, 20)
+        .flatMap((s) => {
+          const rows: any[][] = [];
+          if (s.email) {
+            rows.push([s.email.trim(), 'SET_STUDENT_PASS', 'student', s.id, s.name, 'active']);
+          }
+          if (s.parentEmail) {
+            rows.push([s.parentEmail.trim(), 'SET_PARENT_PASS', 'parent', s.id, `${s.name} (Parent)`, 'active']);
+          }
+          return rows;
+        }),
+    ];
+    writeTasks.push(writeSheetValues(accessToken, spreadsheetId, 'LoginAccess!A1:F', initialLoginRows));
+  }
+
+  await Promise.all(writeTasks);
 
   return {
     success: true,
@@ -476,6 +513,7 @@ export async function pullAllTablesFromGoogleSheets(
     testsRaw,
     syllabusRaw,
     feesRaw,
+    loginRaw,
   ] = await Promise.all([
     readSheetValues(accessToken, spreadsheetId, 'Students!A2:S').catch(() => []),
     readSheetValues(accessToken, spreadsheetId, 'Groups!A2:J').catch(() => []),
@@ -483,6 +521,7 @@ export async function pullAllTablesFromGoogleSheets(
     readSheetValues(accessToken, spreadsheetId, 'TestScores!A2:J').catch(() => []),
     readSheetValues(accessToken, spreadsheetId, 'Syllabus!A2:D').catch(() => []),
     readSheetValues(accessToken, spreadsheetId, 'Fees!A2:N').catch(() => []),
+    readSheetValues(accessToken, spreadsheetId, 'LoginAccess!A2:F').catch(() => []),
   ]);
 
   const students: Student[] = studentsRaw
@@ -588,6 +627,23 @@ export async function pullAllTablesFromGoogleSheets(
       remarks: row[13] ? String(row[13]) : undefined,
     }));
 
+  const loginAccounts: LoginAccount[] = (loginRaw || [])
+    .filter((row) => row && row[0] && row[1])
+    .map((row) => {
+      const rawRole = String(row[2] || 'student').trim().toLowerCase();
+      const role: LoginAccountRole =
+        rawRole === 'admin' ? 'admin' : rawRole === 'parent' ? 'parent' : 'student';
+      const rawStatus = String(row[5] || 'active').trim().toLowerCase();
+      return {
+        email: String(row[0]).trim().toLowerCase(),
+        password: String(row[1]),
+        role,
+        studentId: String(row[3] || '').trim(),
+        studentName: row[4] ? String(row[4]).trim() : undefined,
+        status: rawStatus === 'disabled' || rawStatus === 'inactive' || rawStatus === 'false' ? 'disabled' : 'active',
+      };
+    });
+
   return {
     students,
     groups,
@@ -595,5 +651,6 @@ export async function pullAllTablesFromGoogleSheets(
     testScores,
     syllabus,
     fees,
+    loginAccounts,
   };
 }
